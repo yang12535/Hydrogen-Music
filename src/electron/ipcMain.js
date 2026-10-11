@@ -856,7 +856,12 @@ module.exports = IpcMainEvent = (win, app, lyricFunctions = {}) => {
         const settings = await settingsStore.get('settings')
         const quitAppPreference = settings?.other?.quitApp === 'quit' ? 'quit' : 'minimize'
         if (quitAppPreference == 'minimize') {
-            win.hide()
+            // Wayland 会话下 hide() 后窗口无法再通过 show() 唤回（XWayland 层限制），退化为最小化
+            if (process.env.XDG_SESSION_TYPE === 'wayland') {
+                win.minimize()
+            } else {
+                win.hide()
+            }
         } else if (quitAppPreference == 'quit') {
             win.close()
         }

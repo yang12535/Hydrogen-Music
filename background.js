@@ -436,7 +436,12 @@ const createWindow = () => {
             // 在非macOS平台上，保留您原有的逻辑
             event.preventDefault();
             if (quitAppPreference === 'minimize') {
-                win.hide();
+                // Wayland 会话下 hide() 后窗口无法再通过 show() 唤回（XWayland 层限制），退化为最小化
+                if (process.env.XDG_SESSION_TYPE === 'wayland') {
+                    win.minimize()
+                } else {
+                    win.hide();
+                }
             } else {
                 win.webContents.send('player-save');
                 // 在发送保存指令后，需要一个机制来真正退出

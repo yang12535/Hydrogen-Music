@@ -15,6 +15,8 @@ const trayState = {
     hasPrevious: false,
     hasNext: false,
     isPlaying: false,
+    playMode: 0,
+    lastMenuSignature: null,
 }
 
 const canUseWindowsThumbar = process.platform === 'win32'
@@ -43,6 +45,14 @@ function sendPlayerCommand(channel, payload) {
     if (!win.webContents || win.webContents.isDestroyed?.()) return
     if (typeof payload === 'undefined') win.webContents.send(channel)
     else win.webContents.send(channel, payload)
+}
+
+function showMainWindowFromTray() {
+    const win = getActiveWindow()
+    if (!win || win.isDestroyed?.()) return
+    if (win.isMinimized()) win.restore()
+    win.show()
+    win.focus()
 }
 
 function createWindowsThumbarButton({ icon, tooltip, channel, payload, disabled = false, hidden = false }) {
@@ -103,6 +113,80 @@ function refreshWindowsThumbar() {
     }
 }
 
+function buildTrayMenuTemplate() {
+    const template = [
+        {
+            id: 'tray-play',
+            label: '播放',
+            visible: !trayState.isPlaying,
+            enabled: trayState.hasCurrentSong,
+            click: () => sendPlayerCommand('music-playing-control')
+        },
+        {
+            id: 'tray-pause',
+            label: '暂停',
+            visible: trayState.isPlaying,
+            enabled: trayState.hasCurrentSong,
+            click: () => sendPlayerCommand('music-playing-control')
+        },
+        {
+            id: 'tray-last',
+            label: '上一首',
+            enabled: trayState.hasPrevious,
+            click: () => sendPlayerCommand('music-song-control', 'last')
+        },
+        {
+            id: 'tray-next',
+            label: '下一首',
+            enabled: trayState.hasNext,
+            click: () => sendPlayerCommand('music-song-control', 'next')
+        },
+        {
+            label: '播放模式',
+            submenu: [
+                { id: 'tray-playmode-0', label: '顺序播放', type: 'radio', checked: trayState.playMode === 0, click: () => sendPlayerCommand('music-playmode-control', 0) },
+                { id: 'tray-playmode-1', label: '列表循环', type: 'radio', checked: trayState.playMode === 1, click: () => sendPlayerCommand('music-playmode-control', 1) },
+                { id: 'tray-playmode-2', label: '单曲循环', type: 'radio', checked: trayState.playMode === 2, click: () => sendPlayerCommand('music-playmode-control', 2) },
+                { id: 'tray-playmode-3', label: '随机播放', type: 'radio', checked: trayState.playMode === 3, click: () => sendPlayerCommand('music-playmode-control', 3) },
+            ]
+        },
+        {
+            label: '退出',
+            click: () => sendPlayerCommand('player-save')
+        }
+    ]
+    if (process.platform === 'linux') {
+        // Linux 托盘协议不支持 double-click 事件，补一个显式入口
+        template.unshift({
+            id: 'tray-show-window',
+            label: '显示主窗口',
+            click: showMainWindowFromTray
+        })
+    }
+    return template
+}
+
+function rebuildTrayMenu() {
+    if (!trayState.tray) return
+    const signature = JSON.stringify([
+        trayState.isPlaying,
+        trayState.hasCurrentSong,
+        trayState.hasPrevious,
+        trayState.hasNext,
+        trayState.playMode,
+    ])
+    if (signature === trayState.lastMenuSignature) return
+    trayState.lastMenuSignature = signature
+    trayState.contextMenu = Menu.buildFromTemplate(buildTrayMenuTemplate())
+    trayState.tray.setContextMenu(trayState.contextMenu)
+}
+
+function commitTrayMenu() {
+    // Linux 托盘菜单经 SNI/D-Bus 导出后就地改属性不生效，必须从模板重建重挂
+    if (process.platform !== 'linux') return
+    rebuildTrayMenu()
+}
+
 function syncTrayMenuPlaybackState() {
     const { contextMenu } = trayState
     if (!contextMenu) return
@@ -122,6 +206,8 @@ function syncTrayMenuPlaybackState() {
     }
     if (lastItem) lastItem.enabled = trayState.hasPrevious
     if (nextItem) nextItem.enabled = trayState.hasNext
+
+    commitTrayMenu()
 }
 
 function attachWindowListeners(win) {
@@ -164,48 +250,12 @@ function ensureTrayCreated(iconPath) {
     if (process.platform === 'darwin') image.setTemplateImage(true)
 
     trayState.tray = new Tray(image)
-    trayState.contextMenu = Menu.buildFromTemplate([
-        {
-            id: 'tray-play',
-            label: '播放',
-            click: () => sendPlayerCommand('music-playing-control')
-        },
-        {
-            id: 'tray-pause',
-            label: '暂停',
-            visible: false,
-            click: () => sendPlayerCommand('music-playing-control')
-        },
-        {
-            id: 'tray-last',
-            label: '上一首',
-            click: () => sendPlayerCommand('music-song-control', 'last')
-        },
-        {
-            id: 'tray-next',
-            label: '下一首',
-            click: () => sendPlayerCommand('music-song-control', 'next')
-        },
-        {
-            label: '播放模式',
-            submenu: [
-                { id: 'tray-playmode-0', label: '顺序播放', type: 'radio', click: () => sendPlayerCommand('music-playmode-control', 0) },
-                { id: 'tray-playmode-1', label: '列表循环', type: 'radio', click: () => sendPlayerCommand('music-playmode-control', 1) },
-                { id: 'tray-playmode-2', label: '单曲循环', type: 'radio', click: () => sendPlayerCommand('music-playmode-control', 2) },
-                { id: 'tray-playmode-3', label: '随机播放', type: 'radio', click: () => sendPlayerCommand('music-playmode-control', 3) },
-            ]
-        },
-        {
-            label: '退出',
-            click: () => sendPlayerCommand('player-save')
-        }
-    ])
     trayState.tray.setToolTip('Hydrogen Music')
-    trayState.tray.setContextMenu(trayState.contextMenu)
-    trayState.tray.on('double-click', () => {
-        const win = getActiveWindow()
-        if (win && !win.isDestroyed?.()) win.show()
-    })
+    rebuildTrayMenu()
+    trayState.tray.on('double-click', showMainWindowFromTray)
+    if (process.platform === 'linux') {
+        trayState.tray.on('click', showMainWindowFromTray)
+    }
 
     syncTrayMenuPlaybackState()
     refreshWindowsThumbar()
@@ -246,12 +296,14 @@ module.exports = function InitTray(win, app, iconPath) {
     })
 
     ipcMain.on('music-playmode-tray-change', (_event, mode) => {
+        trayState.playMode = mode
         const { contextMenu } = trayState
         if (!contextMenu) return
         for (let i = 0; i <= 3; i += 1) {
             const item = contextMenu.getMenuItemById(`tray-playmode-${i}`)
             if (item) item.checked = i === mode
         }
+        commitTrayMenu()
     })
 
     app.whenReady().then(() => ensureTrayCreated(iconPath))
