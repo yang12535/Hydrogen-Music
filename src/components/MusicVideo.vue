@@ -419,6 +419,11 @@ const addVideo = async flag => {
                 addMusicVideo.value = null;
             }
             progress.value = 0;
+        })
+        .catch(() => {
+            isDownloading.value = false;
+            progress.value = 0;
+            noticeOpen('添加失败', 2);
         });
 };
 const cancelDownload = () => {
