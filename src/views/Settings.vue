@@ -356,7 +356,7 @@ const routerChange = () => {
 const selectFolder = type => {
     if (type == 'download') {
         windowApi.openFile().then(path => {
-            downloadFolder.value = path
+            if (path) downloadFolder.value = path
         })
     } else if (type == 'local') {
         windowApi.openFile().then(path => {
@@ -364,7 +364,7 @@ const selectFolder = type => {
         })
     } else if (type == 'video') {
         windowApi.openFile().then(path => {
-            videoFolder.value = path
+            if (path) videoFolder.value = path
         })
     }
 }

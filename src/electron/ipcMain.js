@@ -1211,6 +1211,8 @@ module.exports = IpcMainEvent = (win, app, lyricFunctions = {}) => {
         return false
     }
     const inflightMusicVideoExistenceChecks = new Map()
+    // 正在写入的 MV 缓存文件路径：下载/转码期间禁止被 clear-unused-video 当作未登记文件清理
+    const inflightVideoDownloadFiles = new Set()
     async function saveMusicVideo(data) {
         const normalizedPath = normalizeStoredVideoPath(data?.path)
         if (!normalizedPath) return
@@ -1269,6 +1271,8 @@ module.exports = IpcMainEvent = (win, app, lyricFunctions = {}) => {
         const cleanupMusicVideoTask = abortFn => {
             clearMusicVideoCancelListener(cancelListener)
             clearActiveMusicVideoAbort(abortFn)
+            inflightVideoDownloadFiles.delete(videoPath)
+            if (tmpOut) inflightVideoDownloadFiles.delete(tmpOut)
             try { win.setProgressBar(-1) } catch (_) {}
         }
 
@@ -1324,6 +1328,7 @@ module.exports = IpcMainEvent = (win, app, lyricFunctions = {}) => {
                 try { writer && !writer.destroyed && writer.destroy(new Error(reason)) } catch (_) {}
             }
 
+            inflightVideoDownloadFiles.add(videoPath)
             writer = fs.createWriteStream(videoPath)
             cancelListener = () => {
                 abortCurrentDownload()
@@ -1351,6 +1356,7 @@ module.exports = IpcMainEvent = (win, app, lyricFunctions = {}) => {
                     if (isHevc) {
                         try {
                             tmpOut = videoPath.replace(/\.mp4$/i, '_avc.mp4')
+                            inflightVideoDownloadFiles.add(tmpOut)
                             const args = [
                                 '-y',
                                 '-i', videoPath,
@@ -1476,6 +1482,7 @@ module.exports = IpcMainEvent = (win, app, lyricFunctions = {}) => {
             files.forEach(entry => {
                 if (!entry.isFile()) return
                 const filePath = path.join(folderPath, entry.name)
+                if (inflightVideoDownloadFiles.has(filePath)) return
                 if (!trackedPaths.has(path.normalize(filePath))) {
                     removeFileIfExists(filePath)
                 }
